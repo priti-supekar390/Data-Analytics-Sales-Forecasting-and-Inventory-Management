@@ -2,97 +2,124 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import openpyxl
+from prophet import Prophet
 
-#Read Excel file 
-filepath="Sales.xlsx"
-df=pd.read_excel(filepath)
-#Print the Excel data
-print(df)
-
-
-#Data Cleaning
-
-#find the Missing Values
+# --- Data Cleaning Functions ---
 def missing_values(df):
+    df['Category'] = df['Category'].str.strip().str.capitalize()
     print("Missing values column wise\n")
-    missing= df.isnull().sum()
+    missing = df.isnull().sum()
     print(missing)
     return missing
 
-#Drop the Duplicate Values
 def drop_duplicate(df):
-    print("Droping duplicate rows:\n")
-    df_cleaned=df.drop_duplicates()
+    print("Dropping duplicate rows...")
+    df_cleaned = df.drop_duplicates()
     return df_cleaned
 
-#Change the Data type
 def changetype(df):
-    print("change datatype:\n")
-    df=df.copy()
-    df['Unit_Sold']=df['Unit_Sold'].fillna(0).astype(float)
+    print("Changing data types and handling missing values for 'Unit_Sold'...")
+    df = df.copy()
+    df['Unit_Sold'] = df['Unit_Sold'].fillna(0).astype(int) 
     return df
 
-#Fill The null values
-def fillnull(df):
-    return df.fillna(1)
-
-
-#Data Analysis
+# --- Data Analysis & Visualization Functions ---
 def analyze_data(df):
-    #Find The average of the selling Price
-    print("Average Selling price",df['Selling_Price'].mean())
-    
-    #Count the number of product
-    print("Count the no of product",df['Product_Name'].value_counts())
-    
-    #Find The Maximum of the selling Price
-    print("maximum selling price",df['Selling_Price'].max())
+    print("\n--- Starting Data Analysis ---")
+    print("Average Selling price:", df['Selling_Price'].mean())
+    print("Maximum selling price:", df['Selling_Price'].max())
+    print("Minimum Unit Sold:", df['Unit_Sold'].min())
+    print("\nTotal product by category:\n", df.groupby('Category')['Product_Name'].count())
+    return df.sort_values(by='Total_Revenue', ascending=False)
 
-    #Find The Minimum of the unit sold
-    print("Minimum Unit Sold",df['Unit_Sold'].min())
-    
-    #Display the product by category
-    grouped=df.groupby('Category')['Product_Name'].count()
-    print("total product by category:\n",grouped)
-    
-    #sort the data by Total_revenue 
-    return df.sort_values(by='Total_Revenue',ascending=False)
+def plot_sales_by_state(df):
+    print("Generating plot for sales by state...")
+    data = df.groupby('State')['Unit_Sold'].sum()
+    data.plot(kind='bar', color='#007FFF', figsize=(12, 6))
+    plt.title("Total Units Sold by State")
+    plt.xlabel("States")
+    plt.ylabel("Total Units Sold")
+    plt.tight_layout()
+    plt.show()
 
-#save the Modified file
-def save_data(output_path):
-    df.to_excel(output_path,index=False)
-
-#Bar Chart
-data = df.groupby('State')['Product_Name'].count()
-data.plot(kind='bar', color='#007FFF')
-plt.title("Product Sales by State")
-plt.xlabel("States")
-plt.ylabel("Number of Products Sold")
-plt.tight_layout()
-plt.show()
-
-#pie Chart
-def product_total_Revenue(df):
+def plot_revenue_by_category(df):
+    print("Generating plot for revenue by category...")
     revenue_by_product = df.groupby('Category')['Total_Revenue'].sum()
-    revenue_by_product.plot(kind='pie',autopct='%0.1f%%',title='Product Share by Total Revenue',startangle=90)
+    revenue_by_product.plot(kind='pie', autopct='%1.1f%%', title='Product Share by Total Revenue', startangle=90, figsize=(8, 8))
     plt.ylabel('')  
     plt.tight_layout()
     plt.show()
-   
-    
-    
 
-#Main Function
-def main(df):
+# --- Forecasting Function ---
+
+def run_sales_forecast(df):
+    """
+    Runs a sales forecast using Prophet on the cleaned data.
+    """
+    print("\n--- Starting Sales Forecast ---")
+    # 1. Prepare the data for Prophet
+    df_forecast = df[['Date', 'Unit_Sold']].copy()
+    df_forecast.rename(columns={'Date': 'ds', 'Unit_Sold': 'y'}, inplace=True)
+
+    # 1: Drop rows where the date is missing BEFORE converting.
+    df_forecast.dropna(subset=['ds'], inplace=True)
+    
+    # 2: Add 'dayfirst=True' to correctly interpret dates like 18-09-2025.
+    df_forecast['ds'] = pd.to_datetime(df_forecast['ds'], dayfirst=True)
+    
+    # 2. Initialize and fit the model
+    model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=False)
+    model.fit(df_forecast)
+    
+    # 3. Create future dates and predict
+    future = model.make_future_dataframe(periods=90) # Forecast 90 days ahead
+    forecast = model.predict(future)
+    
+    print("Forecast generated successfully.")
+    
+    # 4. Plot the forecast
+    model.plot(forecast, xlabel='Date', ylabel='Units Sold')
+    plt.title('Sales Forecast (Next 90 Days)')
+    plt.show()
+    
+    # 5. Export the forecast results
+    forecast_output_path = 'sales_forecast_output.xlsx'
+    forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].to_excel(forecast_output_path, index=False)
+    print(f"Forecast data saved to '{forecast_output_path}'")
+    print("--- Forecast Complete ---")
+
+# --- Save Function ---
+
+def save_data(df, output_path):
+    print(f"Saving cleaned data to {output_path}...")
+    df.to_excel(output_path, index=False)
+    print("Save complete.")
+
+# --- Main Pipeline ---
+
+def main():
+    filepath = "Sales.xlsx"
+    try:
+        df = pd.read_excel(filepath)
+    except FileNotFoundError:
+        print(f"Error: {filepath} not found.")
+        return
+
+    # --- Run Cleaning and Analysis ---
     missing_values(df)
-    df=drop_duplicate(df)
-    df=changetype(df)
-    df=fillnull(df)
-    df=analyze_data(df)
-    product_total_Revenue(df)
+    df = drop_duplicate(df)
+    df = changetype(df)    
+    df = analyze_data(df)
+    
+    # --- Run Visualizations ---
+    plot_sales_by_state(df)
+    plot_revenue_by_category(df)
 
-    save_data('Sales_cleaned.xlsx')
+    # --- Save and Forecast ---
+    save_data(df, 'Sales_cleaned.xlsx')
+    
+    run_sales_forecast(df)
 
-if __name__=="__main__":
-    main(df)
-
+# --- Script Execution ---
+if __name__ == "__main__":
+    main()
